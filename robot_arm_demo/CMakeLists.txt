@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.20)
 project(robot_arm_demo)
 
 if(NOT CMAKE_CXX_STANDARD)

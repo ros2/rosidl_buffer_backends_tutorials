@@ -52,11 +52,8 @@ ros2 launch robot_arm_demo robot_arm_demo.launch.py
 # CPU transport
 ros2 launch robot_arm_demo robot_arm_demo.launch.py use_cuda:=false
 
-# Side-by-side CUDA vs CPU (requires ~6 GB GPU memory)
+# Side-by-side CUDA vs CPU
 ros2 launch robot_arm_demo robot_arm_compare.launch.py
-
-# Custom resolution
-ros2 launch robot_arm_demo robot_arm_demo.launch.py width:=2560 height:=1440
 ```
 
 All launch files accept `headless:=true` to run without a display window.

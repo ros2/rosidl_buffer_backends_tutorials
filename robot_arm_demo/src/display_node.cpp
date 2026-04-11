@@ -1,9 +1,11 @@
 // Copyright 2026 NVIDIA Corporation
 // Licensed under the Apache License, Version 2.0
 
-#include <torch/torch.h>
+#include <SDL.h>
 #include <c10/cuda/CUDAStream.h>
 #include <cuda_runtime.h>
+#include <torch/torch.h>
+
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -17,7 +19,6 @@
 #include "torch_buffer/torch_buffer_api.hpp"
 #include "display.h"
 #include "font.h"
-#include <SDL.h>
 
 class DisplayNode : public rclcpp::Node
 {
