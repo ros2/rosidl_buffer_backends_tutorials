@@ -15,8 +15,15 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <build_depend>libtorch_vendor</build_depend>
+
+  <depend>libglew-dev</depend>
+  <depend>libx11-dev</depend>
+  <depend>nvidia-cuda</depend>
+  <depend>opengl</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
+  <depend>sdl2</depend>
   <depend>sensor_msgs</depend>
   <depend>torch_buffer</depend>
   <depend>torch_buffer_backend</depend>

@@ -29,6 +29,7 @@ if(NOT DEFINED CMAKE_CUDA_HOST_COMPILER AND DEFINED CMAKE_CXX_COMPILER)
   set(CMAKE_CUDA_HOST_COMPILER "${CMAKE_CXX_COMPILER}")
 endif()
 
+find_package(libtorch_vendor QUIET)
 find_package(Torch REQUIRED)
 
 find_package(rclcpp_components REQUIRED)

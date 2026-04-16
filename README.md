@@ -22,26 +22,16 @@ The demo exercises the full buffer-aware pub/sub pipeline:
 
 ### Dependencies
 
-- [rcl_buffer_ws](https://github.com/yuanknv/ros2) workspace with `pixi`
-- LibTorch (see [torch_buffer_backend prerequisites](https://github.com/yuanknv/torch_buffer_backend#prerequisites))
-- CUDA toolkit, SDL2, GLEW, OpenGL
+- CUDA Toolkit (>= 11.8)
+- LibTorch (provided automatically by `libtorch_vendor` at build time)
+- SDL2, GLEW, OpenGL, X11
 
 ### Build
 
-Build order matters -- device backends must be installed before
-`torch_buffer` so CUDA support is compiled in:
-
 ```bash
-# 1. Build CUDA device backend
-pixi run build cuda_buffer_backend
-
-# 2. Build the demo
+# Build the demo and all its dependencies
 pixi run build robot_arm_demo
 ```
-
-The demo discovers all installed buffer backend plugins automatically
-via `source install/setup.sh`. If `cuda_buffer_backend` is installed,
-the CUDA IPC path is used; otherwise it falls back to CPU.
 
 ### Run
 
