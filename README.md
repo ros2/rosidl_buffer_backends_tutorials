@@ -66,7 +66,9 @@ ros2 launch robot_arm_demo robot_arm_demo.launch.py headless:=true width:=W heig
 | 3840x2160 | 31.6 MB | CUDA | 59.5 | 5.8x |
 | 3840x2160 | 31.6 MB | CPU | 10.3 | -- |
 
-The CUDA path maintains high throughput across resolutions because zero-copy IPC transfers only a handle, not the pixel data. The CPU path must copy frames from GPU to host and serialise them through the middleware, so throughput drops as image size grows. At 4K (31.6 MB/frame) the CUDA backend is ~6x faster than the raw CPU path.
+The CUDA path maintains high throughput across resolutions because zero-copy IPC transfers only a handle, not the pixel data.
+ The CPU path must copy frames from GPU to host and serialise them through the middleware, so throughput drops as image size grows. 
+ At 4K (31.6 MB/frame) the CUDA backend is ~6x faster than the raw CPU path.
 
 ## License
 
