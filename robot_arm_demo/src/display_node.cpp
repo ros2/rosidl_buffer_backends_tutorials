@@ -1,5 +1,16 @@
-// Copyright 2026 NVIDIA Corporation
-// Licensed under the Apache License, Version 2.0
+// Copyright 2026 Open Source Robotics Foundation, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include <SDL.h>
 #include <c10/cuda/CUDAStream.h>
@@ -9,6 +20,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -17,8 +29,8 @@
 #include "rclcpp_components/register_node_macro.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "torch_buffer/torch_buffer_api.hpp"
-#include "display.h"
-#include "font.h"
+#include "display.hpp"
+#include "font.hpp"
 
 class DisplayNode : public rclcpp::Node
 {
@@ -49,7 +61,7 @@ public:
     auto qos = rclcpp::QoS(1).reliable();
 
     rclcpp::SubscriptionOptions sub_opts;
-    if (use_cuda_) sub_opts.acceptable_buffer_backends = "any";
+    if (use_cuda_) {sub_opts.acceptable_buffer_backends = "any";}
     subscription_ = this->create_subscription<sensor_msgs::msg::Image>(
       "image", qos,
       std::bind(&DisplayNode::image_callback, this, std::placeholders::_1),
@@ -78,13 +90,14 @@ public:
 private:
   void ensure_display(int w, int h)
   {
-    if (display_ && img_width_ == w && img_height_ == h) return;
+    if (display_ && img_width_ == w && img_height_ == h) {return;}
     img_width_ = w;
     img_height_ = h;
 
     display_ = std::make_unique<FrameDisplay>();
     if (!display_->init(w, h, headless_, use_cuda_, false,
-                        max_win_w_, max_win_h_, win_x_, win_y_, borderless_)) {
+                        max_win_w_, max_win_h_, win_x_, win_y_, borderless_))
+    {
       RCLCPP_WARN(this->get_logger(), "Display init failed, falling back to headless");
       headless_ = true;
     }
@@ -96,22 +109,23 @@ private:
 
   void pump_events()
   {
-    if (display_ && !display_->poll_events()) rclcpp::shutdown();
+    if (display_ && !display_->poll_events()) {rclcpp::shutdown();}
   }
 
-  static void stamp_label(at::Tensor & frame, const at::Tensor & label) {
+  static void stamp_label(at::Tensor & frame, const at::Tensor & label)
+  {
     int lh = label.size(0), lw = label.size(1);
     int fh = frame.size(0), fw = frame.size(1);
-    if (lh > fh || lw > fw) return;
+    if (lh > fh || lw > fw) {return;}
     int y0 = 10, x0 = 16;
-    if (y0 + lh > fh) return;
+    if (y0 + lh > fh) {return;}
     auto roi = frame.index({
       torch::indexing::Slice(y0, y0 + lh),
       torch::indexing::Slice(x0, x0 + lw),
       torch::indexing::Slice(0, 3)
     });
     auto alpha = label.unsqueeze(2);
-    if (frame.is_cuda()) alpha = alpha.to(frame.device());
+    if (frame.is_cuda()) {alpha = alpha.to(frame.device());}
     roi.copy_(roi * (1.0f - alpha));
   }
 
@@ -122,9 +136,9 @@ private:
     auto guard = torch_buffer_backend::set_stream();
     int w = img_width_, h = img_height_;
     const rosidl::Buffer<uint8_t> & data = msg->data;
-    at::Tensor frame = (data.get_backend_type() == "torch")
-      ? torch_buffer_backend::from_buffer(data).reshape({h, w, 4})
-      : torch::from_blob(const_cast<uint8_t *>(data.data()), {h, w, 4}, torch::kByte);
+    at::Tensor frame = (data.get_backend_type() == "torch") ?
+      torch_buffer_backend::from_buffer(data).reshape({h, w, 4}) :
+      torch::from_blob(const_cast<uint8_t *>(data.data()), {h, w, 4}, torch::kByte);
 
     if (!headless_ && display_) {
       auto labeled = frame.clone();
@@ -132,8 +146,9 @@ private:
       display_->present(labeled);
     }
 
-    if (!record_path_.empty())
+    if (!record_path_.empty()) {
       record_frame(frame, img_width_, img_height_);
+    }
 
     report_fps();
   }
@@ -144,7 +159,7 @@ private:
     if (last_record_time_.time_since_epoch().count() > 0) {
       double elapsed_ms = std::chrono::duration<double, std::milli>(
         now - last_record_time_).count();
-      if (elapsed_ms < 16.0) return;
+      if (elapsed_ms < 16.0) {return;}
     }
     last_record_time_ = now;
 
@@ -184,7 +199,7 @@ private:
     frame_count_++;
     auto now = std::chrono::steady_clock::now();
     float elapsed = std::chrono::duration<float>(now - fps_timer_).count();
-    if (elapsed < 1.0f) return;
+    if (elapsed < 1.0f) {return;}
 
     float fps = frame_count_ / elapsed;
     const char * tag = headless_ ? "headless" : (use_cuda_ ? "cuda" : "cpu");
