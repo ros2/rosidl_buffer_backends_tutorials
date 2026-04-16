@@ -46,21 +46,16 @@ private:
   {
     auto guard = torch_buffer_backend::set_stream();
 
-    sensor_msgs::msg::Image msg;
-    if (use_cuda_) {
-      msg = torch_buffer_backend::allocate_msg<sensor_msgs::msg::Image>(
-        {height_, width_, 4}, torch::kByte);
-    }
+    renderer_->update();
+    at::Tensor frame = renderer_->render_frame();
 
+    sensor_msgs::msg::Image msg;
     msg.header.frame_id = "render";
     msg.height = height_;
     msg.width = width_;
     msg.encoding = "bgra8";
     msg.step = width_ * 4;
     msg.is_bigendian = 0;
-
-    renderer_->update();
-    at::Tensor frame = renderer_->render_frame();
 
     if (use_cuda_) {
       msg.data = torch_buffer_backend::to_buffer(frame);
