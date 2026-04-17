@@ -63,15 +63,10 @@ private:
     at::Tensor frame = renderer_->render_frame();
 
     sensor_msgs::msg::Image msg;
-    msg.header.frame_id = "render";
-    msg.height = height_;
-    msg.width = width_;
-    msg.encoding = "bgra8";
-    msg.step = width_ * 4;
-    msg.is_bigendian = 0;
-
     if (use_cuda_) {
-      msg.data = torch_buffer_backend::to_buffer(frame);
+      msg = torch_buffer_backend::allocate_msg<sensor_msgs::msg::Image>(
+        {height_, width_, 4}, torch::kByte);
+      torch_buffer_backend::to_buffer(msg.data, frame);
     } else {
       size_t nbytes = static_cast<size_t>(height_) * width_ * 4;
       msg.data.resize(nbytes);
@@ -80,6 +75,13 @@ private:
         cudaMemcpyDeviceToHost, stream);
       cudaStreamSynchronize(stream);
     }
+
+    msg.header.frame_id = "render";
+    msg.height = height_;
+    msg.width = width_;
+    msg.encoding = "bgra8";
+    msg.step = width_ * 4;
+    msg.is_bigendian = 0;
 
     publisher_->publish(msg);
     c10::cuda::CUDACachingAllocator::emptyCache();

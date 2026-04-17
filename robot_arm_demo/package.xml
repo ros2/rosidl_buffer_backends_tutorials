@@ -18,7 +18,7 @@
   <depend>libglew-dev</depend>
   <depend>libtorch_vendor</depend>
   <depend>libx11-dev</depend>
-  <depend>nvidia-cuda</depend>
+  <depend>nvidia-cuda-dev</depend>
   <depend>opengl</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>

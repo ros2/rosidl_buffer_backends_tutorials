@@ -29,9 +29,21 @@ The demo exercises the full buffer-aware pub/sub pipeline:
 ### Build
 
 ```bash
-# Build the demo and all its dependencies
-pixi run build robot_arm_demo
+# 1. Install system dependencies (CUDA toolkit, SDL2, GLEW, OpenGL, X11)
+rosdep install \
+  --from-paths src/rosidl_buffer_backends src/rosidl_buffer_backends_tutorials \
+  --ignore-src -y
+
+# 2. Build the CUDA backend, source it, then build the demo
+colcon build --symlink-install --packages-up-to cuda_buffer_backend && \
+  source install/setup.sh && \
+  colcon build --symlink-install --packages-up-to robot_arm_demo && \
+  source install/setup.sh
 ```
+
+The intermediate `source install/setup.sh` is required so that `torch_buffer`
+can discover `cuda_buffer` at CMake configure time and compile the CUDA path.
+
 
 ### Run
 
