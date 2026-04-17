@@ -28,21 +28,27 @@ The demo exercises the full buffer-aware pub/sub pipeline:
 
 ### Build
 
-```bash
-# 1. Install system dependencies (CUDA toolkit, SDL2, GLEW, OpenGL, X11)
-rosdep install \
-  --from-paths src/rosidl_buffer_backends src/rosidl_buffer_backends_tutorials \
-  --ignore-src -y
+Requires a ROS 2 Rolling source workspace; see
+[Building ROS 2 on Ubuntu](https://docs.ros.org/en/rolling/Installation/Alternatives/Ubuntu-Development-Setup.html)
+for the canonical setup. After cloning both
+`rosidl_buffer_backends` and `rosidl_buffer_backends_tutorials` into your
+workspace's `src/` directory:
 
-# 2. Build the CUDA backend, source it, then build the demo
+```bash
+# Install system dependencies (CUDA toolkit, SDL2, GLEW, OpenGL, X11).
+rosdep install --from-paths src --ignore-src -y \
+  --skip-keys "fastcdr rti-connext-dds-7.7.0 urdfdom_headers qt6-svg-dev"
+
+# Build the CUDA backend, source it, then build the demo.
 colcon build --symlink-install --packages-up-to cuda_buffer_backend && \
   source install/setup.sh && \
   colcon build --symlink-install --packages-up-to robot_arm_demo && \
   source install/setup.sh
 ```
 
-The intermediate `source install/setup.sh` is required so that `torch_buffer`
-can discover `cuda_buffer` at CMake configure time and compile the CUDA path.
+The intermediate `source install/setup.sh` is required so that
+`torch_buffer` can discover `cuda_buffer` at CMake configure time and
+compile the CUDA path.
 
 
 ### Run
