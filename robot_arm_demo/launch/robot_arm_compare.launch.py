@@ -23,6 +23,9 @@ def generate_launch_description():
         DeclareLaunchArgument('width', default_value='1920'),
         DeclareLaunchArgument('height', default_value='1080'),
         DeclareLaunchArgument('headless', default_value='false'),
+        DeclareLaunchArgument('window_width', default_value='960'),
+        DeclareLaunchArgument('window_height', default_value='540'),
+        DeclareLaunchArgument('window_y', default_value='100'),
 
         Node(
             package='robot_arm_demo',
@@ -55,6 +58,11 @@ def generate_launch_description():
             parameters=[{
                 'use_cuda': True,
                 'headless': LaunchConfiguration('headless'),
+                'borderless': True,
+                'window_x': 0,
+                'window_y': LaunchConfiguration('window_y'),
+                'max_window_width': LaunchConfiguration('window_width'),
+                'max_window_height': LaunchConfiguration('window_height'),
             }],
         ),
 
@@ -65,6 +73,11 @@ def generate_launch_description():
             parameters=[{
                 'use_cuda': False,
                 'headless': LaunchConfiguration('headless'),
+                'borderless': True,
+                'window_x': LaunchConfiguration('window_width'),
+                'window_y': LaunchConfiguration('window_y'),
+                'max_window_width': LaunchConfiguration('window_width'),
+                'max_window_height': LaunchConfiguration('window_height'),
             }],
         ),
     ])
