@@ -27,8 +27,8 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
-#include "sensor_msgs/msg/image.hpp"
-#include "torch_buffer/torch_buffer_api.hpp"
+#include "torch_tensor_api/torch_tensor_api.hpp"
+#include "torch_tensor_msgs/msg/tensor.hpp"
 #include "display.hpp"
 #include "font.hpp"
 
@@ -42,7 +42,6 @@ public:
     headless_(false)
   {
     this->declare_parameter<bool>("headless", false);
-    this->declare_parameter<bool>("use_cuda", true);
     this->declare_parameter<bool>("borderless", false);
     this->declare_parameter<std::string>("record_path", "");
     this->declare_parameter<int>("window_x", -1);
@@ -50,7 +49,6 @@ public:
     this->declare_parameter<int>("max_window_width", 1920);
     this->declare_parameter<int>("max_window_height", 1080);
     headless_ = this->get_parameter("headless").as_bool();
-    use_cuda_ = this->get_parameter("use_cuda").as_bool();
     borderless_ = this->get_parameter("borderless").as_bool();
     record_path_ = this->get_parameter("record_path").as_string();
     win_x_ = static_cast<int>(this->get_parameter("window_x").as_int());
@@ -61,21 +59,22 @@ public:
     auto qos = rclcpp::QoS(1).reliable();
 
     rclcpp::SubscriptionOptions sub_opts;
-    if (use_cuda_) {sub_opts.acceptable_buffer_backends = "any";}
-    subscription_ = this->create_subscription<sensor_msgs::msg::Image>(
+    sub_opts.acceptable_buffer_backends = "any";
+    subscription_ = this->create_subscription<torch_tensor_msgs::msg::Tensor>(
       "image", qos,
-      std::bind(&DisplayNode::image_callback, this, std::placeholders::_1),
+      std::bind(&DisplayNode::tensor_callback, this, std::placeholders::_1),
       sub_opts);
 
     if (!headless_) {
       event_timer_ = this->create_wall_timer(
         std::chrono::milliseconds(4),
         std::bind(&DisplayNode::pump_events, this));
-      label_ = make_text_bitmap(use_cuda_ ? "CUDA" : "CPU", 2, torch::kCPU);
+      label_ = make_text_bitmap("BRIDGE", 2, torch::kCPU);
     }
 
-    RCLCPP_INFO(this->get_logger(), "Display started (%s%s, waiting for first frame)",
-      headless_ ? "headless" : (use_cuda_ ? "CUDA-GL interop" : "OpenGL"),
+    RCLCPP_INFO(
+      this->get_logger(), "Display started (%s%s, waiting for first frame)",
+      headless_ ? "headless" : "CUDA-GL interop",
       record_path_.empty() ? "" : ", recording");
   }
 
@@ -95,15 +94,17 @@ private:
     img_height_ = h;
 
     display_ = std::make_unique<FrameDisplay>();
-    if (!display_->init(w, h, headless_, use_cuda_, false,
-                        max_win_w_, max_win_h_, win_x_, win_y_, borderless_))
+    if (!display_->init(
+        w, h, headless_, /*use_cuda=*/true, false,
+        max_win_w_, max_win_h_, win_x_, win_y_, borderless_))
     {
       RCLCPP_WARN(this->get_logger(), "Display init failed, falling back to headless");
       headless_ = true;
     }
 
-    RCLCPP_INFO(this->get_logger(), "Display initialized: %dx%d (%s, window %dx%d)",
-      w, h, headless_ ? "headless" : (use_cuda_ ? "CUDA-GL interop" : "OpenGL"),
+    RCLCPP_INFO(
+      this->get_logger(), "Display initialized: %dx%d (%s, window %dx%d)",
+      w, h, headless_ ? "headless" : "CUDA-GL interop",
       display_->win_width(), display_->win_height());
   }
 
@@ -129,16 +130,21 @@ private:
     roi.copy_(roi * (1.0f - alpha));
   }
 
-  void image_callback(const sensor_msgs::msg::Image::SharedPtr msg)
+  void tensor_callback(const torch_tensor_msgs::msg::Tensor::SharedPtr msg)
   {
-    ensure_display(static_cast<int>(msg->width), static_cast<int>(msg->height));
+    if (msg->shape.size() < 3) {
+      RCLCPP_ERROR(
+        this->get_logger(), "Expected rank-3 tensor, got rank=%zu",
+        msg->shape.size());
+      return;
+    }
+    int h = static_cast<int>(msg->shape[0]);
+    int w = static_cast<int>(msg->shape[1]);
+    ensure_display(w, h);
 
-    auto guard = torch_buffer_backend::set_stream();
-    int w = img_width_, h = img_height_;
-    const rosidl::Buffer<uint8_t> & data = msg->data;
-    at::Tensor frame = (data.get_backend_type() == "torch") ?
-      torch_buffer_backend::from_buffer(data).reshape({h, w, 4}) :
-      torch::from_blob(const_cast<uint8_t *>(data.data()), {h, w, 4}, torch::kByte);
+    auto guard = torch_tensor_api::set_stream();
+    const torch_tensor_msgs::msg::Tensor & const_msg = *msg;
+    at::Tensor frame = torch_tensor_api::from_tensor_msg(const_msg, /*clone=*/false);
 
     if (!headless_ && display_) {
       auto labeled = frame.clone();
@@ -178,14 +184,16 @@ private:
         return;
       }
       record_buf_.resize(static_cast<size_t>(w) * h * 4);
-      RCLCPP_INFO(this->get_logger(), "Recording started: %s (%dx%d @ 60fps)",
+      RCLCPP_INFO(
+        this->get_logger(), "Recording started: %s (%dx%d @ 60fps)",
         record_path_.c_str(), w, h);
     }
 
     size_t frame_bytes = static_cast<size_t>(w) * h * 4;
     if (tensor.is_cuda()) {
       cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
-      cudaMemcpyAsync(record_buf_.data(), tensor.data_ptr(), frame_bytes,
+      cudaMemcpyAsync(
+        record_buf_.data(), tensor.data_ptr(), frame_bytes,
         cudaMemcpyDeviceToHost, stream);
       cudaStreamSynchronize(stream);
     } else {
@@ -202,13 +210,12 @@ private:
     if (elapsed < 1.0f) {return;}
 
     float fps = frame_count_ / elapsed;
-    const char * tag = headless_ ? "headless" : (use_cuda_ ? "cuda" : "cpu");
+    const char * tag = headless_ ? "headless" : "bridge";
     RCLCPP_INFO(this->get_logger(), "Display: %.1f fps | %s", fps, tag);
 
     if (!headless_) {
       char hud[64];
-      snprintf(hud, sizeof(hud), "%s | %.0f FPS",
-        use_cuda_ ? "CUDA" : "CPU", fps);
+      snprintf(hud, sizeof(hud), "BRIDGE | %.0f FPS", fps);
       label_ = make_text_bitmap(hud, 2, torch::kCPU);
     }
 
@@ -216,7 +223,7 @@ private:
     fps_timer_ = now;
   }
 
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
+  rclcpp::Subscription<torch_tensor_msgs::msg::Tensor>::SharedPtr subscription_;
   rclcpp::TimerBase::SharedPtr event_timer_;
   int frame_count_{0};
   std::chrono::steady_clock::time_point fps_timer_;
@@ -229,7 +236,6 @@ private:
   int img_width_{0}, img_height_{0};
   int win_x_, win_y_;
   int max_win_w_, max_win_h_;
-  bool use_cuda_;
   bool headless_;
   bool borderless_;
   std::unique_ptr<FrameDisplay> display_;

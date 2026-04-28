@@ -22,7 +22,6 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('width', default_value='1920'),
         DeclareLaunchArgument('height', default_value='1080'),
-        DeclareLaunchArgument('use_cuda', default_value='true'),
         DeclareLaunchArgument('headless', default_value='false'),
 
         Node(
@@ -31,7 +30,6 @@ def generate_launch_description():
             parameters=[{
                 'image_width': LaunchConfiguration('width'),
                 'image_height': LaunchConfiguration('height'),
-                'use_cuda': LaunchConfiguration('use_cuda'),
             }],
         ),
 
@@ -39,7 +37,6 @@ def generate_launch_description():
             package='robot_arm_demo',
             executable='display_node',
             parameters=[{
-                'use_cuda': LaunchConfiguration('use_cuda'),
                 'headless': LaunchConfiguration('headless'),
             }],
         ),

@@ -11,9 +11,8 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(torch_buffer REQUIRED)
-find_package(torch_buffer_backend REQUIRED)
+find_package(torch_tensor_api REQUIRED)
+find_package(torch_tensor_msgs REQUIRED)
 find_package(Torch REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 
@@ -32,11 +31,10 @@ add_library(renderer_component SHARED
 )
 target_link_libraries(renderer_component
   ${TORCH_LIBRARIES}
-  torch_buffer::torch_buffer
-  torch_buffer_backend::torch_buffer_backend
+  torch_tensor_api::torch_tensor_api
+  ${torch_tensor_msgs_TARGETS}
   rclcpp::rclcpp
   rclcpp_components::component
-  ${sensor_msgs_TARGETS}
   CUDA::cudart
   CUDA::cuda_driver
 )
@@ -60,11 +58,10 @@ add_library(display_component SHARED
 target_compile_definitions(display_component PRIVATE USE_CUDA_GL_INTEROP)
 target_link_libraries(display_component
   ${TORCH_LIBRARIES}
-  torch_buffer::torch_buffer
-  torch_buffer_backend::torch_buffer_backend
+  torch_tensor_api::torch_tensor_api
+  ${torch_tensor_msgs_TARGETS}
   rclcpp::rclcpp
   rclcpp_components::component
-  ${sensor_msgs_TARGETS}
   CUDA::cudart
   CUDA::cuda_driver
   OpenGL::GL
