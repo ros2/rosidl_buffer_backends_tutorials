@@ -27,8 +27,8 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
-#include "torch_tensor_api/torch_tensor_api.hpp"
-#include "torch_tensor_msgs/msg/tensor.hpp"
+#include "torch_conversions/torch_conversions.hpp"
+#include "tensor_msgs/msg/tensor.hpp"
 #include "display.hpp"
 #include "font.hpp"
 
@@ -60,7 +60,7 @@ public:
 
     rclcpp::SubscriptionOptions sub_opts;
     sub_opts.acceptable_buffer_backends = "any";
-    subscription_ = this->create_subscription<torch_tensor_msgs::msg::Tensor>(
+    subscription_ = this->create_subscription<tensor_msgs::msg::Tensor>(
       "image", qos,
       std::bind(&DisplayNode::tensor_callback, this, std::placeholders::_1),
       sub_opts);
@@ -130,7 +130,7 @@ private:
     roi.copy_(roi * (1.0f - alpha));
   }
 
-  void tensor_callback(const torch_tensor_msgs::msg::Tensor::SharedPtr msg)
+  void tensor_callback(const tensor_msgs::msg::Tensor::SharedPtr msg)
   {
     if (msg->shape.size() < 3) {
       RCLCPP_ERROR(
@@ -142,9 +142,9 @@ private:
     int w = static_cast<int>(msg->shape[1]);
     ensure_display(w, h);
 
-    auto guard = torch_tensor_api::set_stream();
-    const torch_tensor_msgs::msg::Tensor & const_msg = *msg;
-    at::Tensor frame = torch_tensor_api::from_tensor_msg(const_msg, /*clone=*/false);
+    auto guard = torch_conversions::set_stream();
+    const tensor_msgs::msg::Tensor & const_msg = *msg;
+    at::Tensor frame = torch_conversions::from_input_tensor_msg(const_msg, /*clone=*/false);
 
     if (!headless_ && display_) {
       auto labeled = frame.clone();
@@ -223,7 +223,7 @@ private:
     fps_timer_ = now;
   }
 
-  rclcpp::Subscription<torch_tensor_msgs::msg::Tensor>::SharedPtr subscription_;
+  rclcpp::Subscription<tensor_msgs::msg::Tensor>::SharedPtr subscription_;
   rclcpp::TimerBase::SharedPtr event_timer_;
   int frame_count_{0};
   std::chrono::steady_clock::time_point fps_timer_;

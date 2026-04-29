@@ -4,9 +4,9 @@
   <name>robot_arm_demo</name>
   <version>0.0.0</version>
   <description>
-    GPU-rendered frames published as torch_tensor_msgs/Tensor and
+    GPU-rendered frames published as tensor_msgs/Tensor and
     delivered via the cuda_buffer_backend zero-copy transport, received
-    and displayed by a second node using torch_tensor_api.
+    and displayed by a second node using torch_conversions.
   </description>
 
   <maintainer email="yuankunz@nvidia.com">Yuankun Zhu</maintainer>
@@ -23,8 +23,8 @@
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
   <depend>sdl2</depend>
-  <depend>torch_tensor_api</depend>
-  <depend>torch_tensor_msgs</depend>
+  <depend>torch_conversions</depend>
+  <depend>tensor_msgs</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

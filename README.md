@@ -4,16 +4,16 @@ End-to-end tutorials for the [rosidl_buffer_backends](https://github.com/ros2/ro
 
 ## robot_arm_demo
 
-A ROS 2 demo that renders an SDF-based pencil-sketch robot arm animation entirely on the GPU via LibTorch tensor ops, publishes BGRA frames as `torch_tensor_msgs/msg/Tensor`, and displays them in an SDL2/OpenGL window with CUDA-GL interop.
+A ROS 2 demo that renders an SDF-based pencil-sketch robot arm animation entirely on the GPU via LibTorch tensor ops, publishes BGRA frames as `tensor_msgs/msg/Tensor`, and displays them in an SDL2/OpenGL window with CUDA-GL interop.
 
-The demo uses the **`torch_tensor_api`** to transport frames as a first-class, DLPack-aligned tensor message. Under the hood, `cuda_buffer_backend` still carries the bytes zero-copy via CUDA IPC; the bridge provides the tensor metadata layer (shape, strides, dtype, device) as a standard ROS 2 message instead of piggybacking on `sensor_msgs/Image`.
+The demo uses the **`torch_conversions`** to transport frames as a first-class, DLPack-aligned tensor message. Under the hood, `cuda_buffer_backend` still carries the bytes zero-copy via CUDA IPC; the bridge provides the tensor metadata layer (shape, strides, dtype, device) as a standard ROS 2 message instead of piggybacking on `sensor_msgs/Image`.
 
 Animation is frame-count driven (fixed dt = 1/60 s per frame), so low FPS results in slower but smooth playback rather than frame skipping.
 
 The demo exercises the full bridge pub/sub pipeline:
 
-1. **renderer_node** -- renders BGRA frames on the GPU using LibTorch SDF operations, allocates a `torch_tensor_msgs::msg::Tensor` via `torch_tensor_api::allocate_tensor`, copies the rendered frame into it with `to_tensor_msg`, and publishes.
-2. **display_node** -- subscribes, wraps the received `Tensor` as an `at::Tensor` via `torch_tensor_api::from_tensor_msg` (routed through `at::fromDLPack`), renders into an SDL2/OpenGL window (with CUDA-GL interop), and reports FPS.
+1. **renderer_node** -- renders BGRA frames on the GPU using LibTorch SDF operations, allocates a `tensor_msgs::msg::Tensor` via `torch_conversions::allocate_tensor_msg`, copies the rendered frame into it with `to_tensor_msg`, and publishes.
+2. **display_node** -- subscribes, wraps the received `Tensor` as an `at::Tensor` via `torch_conversions::from_input_tensor_msg` (routed through `at::fromDLPack`), renders into an SDL2/OpenGL window (with CUDA-GL interop), and reports FPS.
 
 ### Dependencies
 
@@ -35,14 +35,14 @@ rosdep install --from-paths src --ignore-src -y \
   --skip-keys "fastcdr rti-connext-dds-7.7.0 urdfdom_headers qt6-svg-dev"
 
 # Build the bridge + its CUDA transport dependency, source, then the demo.
-colcon build --symlink-install --packages-up-to torch_tensor_api && \
+colcon build --symlink-install --packages-up-to torch_conversions && \
   source install/setup.sh && \
   colcon build --symlink-install --packages-up-to robot_arm_demo && \
   source install/setup.sh
 ```
 
 The intermediate `source install/setup.sh` is required so that
-`torch_tensor_api` can discover `cuda_buffer` at CMake configure time and
+`torch_conversions` can discover `cuda_buffer` at CMake configure time and
 compile the CUDA fast path.
 
 ### Run
@@ -70,7 +70,7 @@ variant of this tutorial (pre-bridge) and are retained here as a baseline
 for comparison. Re-run on your hardware with the current bridge-based
 tutorial and fill in the third column.
 
-| Resolution | Image Size | Backend (`torch_buffer_backend`) | Bridge (`torch_tensor_api`) | CPU fallback |
+| Resolution | Image Size | Backend (`torch_buffer_backend`) | Bridge (`torch_conversions`) | CPU fallback |
 |---|---|---:|---:|---:|
 | 1920x1080 | 7.9 MB | 116.6 FPS | TBD | 35.5 FPS |
 | 2560x1440 | 14.1 MB | 90.6 FPS | TBD | 21.3 FPS |
