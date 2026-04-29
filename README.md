@@ -4,7 +4,7 @@ End-to-end tutorials for the [rosidl_buffer_backends](https://github.com/ros2/ro
 
 ## robot_arm_demo
 
-A ROS 2 demo that renders an SDF-based pencil-sketch robot arm animation entirely on the GPU via LibTorch tensor ops, publishes BGRA frames as `tensor_msgs/msg/Tensor`, and displays them in an SDL2/OpenGL window with CUDA-GL interop.
+A ROS 2 demo that renders an SDF-based pencil-sketch robot arm animation entirely on the GPU via LibTorch tensor ops, publishes BGRA frames as `tensor_msgs/msg/ExperimentalTensor`, and displays them in an SDL2/OpenGL window with CUDA-GL interop.
 
 The demo uses the **`torch_conversions`** to transport frames as a first-class, DLPack-aligned tensor message. Under the hood, `cuda_buffer_backend` still carries the bytes zero-copy via CUDA IPC; the bridge provides the tensor metadata layer (shape, strides, dtype, device) as a standard ROS 2 message instead of piggybacking on `sensor_msgs/Image`.
 
@@ -12,7 +12,7 @@ Animation is frame-count driven (fixed dt = 1/60 s per frame), so low FPS result
 
 The demo exercises the full bridge pub/sub pipeline:
 
-1. **renderer_node** -- renders BGRA frames on the GPU using LibTorch SDF operations, allocates a `tensor_msgs::msg::Tensor` via `torch_conversions::allocate_tensor_msg`, copies the rendered frame into it with `to_tensor_msg`, and publishes.
+1. **renderer_node** -- renders BGRA frames on the GPU using LibTorch SDF operations, allocates a `tensor_msgs::msg::ExperimentalTensor` via `torch_conversions::allocate_tensor_msg`, copies the rendered frame into it with `to_tensor_msg`, and publishes.
 2. **display_node** -- subscribes, wraps the received `Tensor` as an `at::Tensor` via `torch_conversions::from_input_tensor_msg` (routed through `at::fromDLPack`), renders into an SDL2/OpenGL window (with CUDA-GL interop), and reports FPS.
 
 ### Dependencies

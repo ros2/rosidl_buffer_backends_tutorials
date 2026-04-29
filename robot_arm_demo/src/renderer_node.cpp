@@ -22,7 +22,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 #include "torch_conversions/torch_conversions.hpp"
-#include "tensor_msgs/msg/tensor.hpp"
+#include "tensor_msgs/msg/experimental_tensor.hpp"
 #include "robot_arm.hpp"
 
 class RendererNode : public rclcpp::Node
@@ -39,7 +39,7 @@ public:
     renderer_ = std::make_unique<RobotArmRenderer>(width_, height_, torch::kCUDA);
 
     auto qos = rclcpp::QoS(1).reliable();
-    publisher_ = this->create_publisher<tensor_msgs::msg::Tensor>("image", qos);
+    publisher_ = this->create_publisher<tensor_msgs::msg::ExperimentalTensor>("image", qos);
     timer_ = this->create_wall_timer(
       std::chrono::milliseconds(1),
       std::bind(&RendererNode::timer_callback, this));
@@ -58,7 +58,7 @@ private:
     renderer_->update();
     at::Tensor frame = renderer_->render_frame();
 
-    tensor_msgs::msg::Tensor msg = torch_conversions::allocate_tensor_msg(
+    tensor_msgs::msg::ExperimentalTensor msg = torch_conversions::allocate_tensor_msg(
       {height_, width_, 4}, torch::kByte);
     torch_conversions::to_tensor_msg(msg, frame);
 
@@ -66,7 +66,7 @@ private:
     c10::cuda::CUDACachingAllocator::emptyCache();
   }
 
-  rclcpp::Publisher<tensor_msgs::msg::Tensor>::SharedPtr publisher_;
+  rclcpp::Publisher<tensor_msgs::msg::ExperimentalTensor>::SharedPtr publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
   int width_, height_;
   std::unique_ptr<RobotArmRenderer> renderer_;
