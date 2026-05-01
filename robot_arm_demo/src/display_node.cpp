@@ -244,13 +244,3 @@ private:
 
 RCLCPP_COMPONENTS_REGISTER_NODE(DisplayNode)
 
-int main(int argc, char ** argv)
-{
-  rclcpp::init(argc, argv);
-  auto node = std::make_shared<DisplayNode>(rclcpp::NodeOptions());
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(node);
-  executor.spin();
-  rclcpp::shutdown();
-  return 0;
-}
