@@ -35,8 +35,6 @@ public:
   void present(const torch::Tensor & frame);
   bool poll_events();
 
-  DisplayMode mode() const;
-  SDL_Window * window() const;
   int win_width() const;
   int win_height() const;
 

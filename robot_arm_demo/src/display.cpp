@@ -21,7 +21,6 @@
 #include <X11/Xatom.h>
 #include <algorithm>
 #include <iostream>
-#include <cstdio>
 
 #ifdef USE_CUDA_GL_INTEROP
 #include <cuda_runtime.h>
@@ -338,7 +337,5 @@ bool FrameDisplay::poll_events()
   return true;
 }
 
-DisplayMode FrameDisplay::mode() const {return mode_;}
-SDL_Window * FrameDisplay::window() const {return window_;}
 int FrameDisplay::win_width() const {return winW_;}
 int FrameDisplay::win_height() const {return winH_;}

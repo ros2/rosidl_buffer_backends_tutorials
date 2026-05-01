@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <SDL.h>
-#include <c10/cuda/CUDAStream.h>
-#include <cuda_runtime.h>
 #include <torch/torch.h>
 
 #include <chrono>
