@@ -184,7 +184,3 @@ private:
 };
 
 RCLCPP_COMPONENTS_REGISTER_NODE(DisplayNode)
-<<<<<<< HEAD
-
-=======
->>>>>>> 5b90bad (resolve comments, update readme)
