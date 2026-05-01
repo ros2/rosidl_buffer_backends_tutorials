@@ -338,22 +338,6 @@ bool FrameDisplay::poll_events()
   return true;
 }
 
-void FrameDisplay::save_ppm(const torch::Tensor & frame_bgra, const std::string & path)
-{
-  auto cpu = frame_bgra.to(torch::kCPU).contiguous();
-  int H = cpu.size(0), W = cpu.size(1);
-  auto rgb = torch::stack({cpu.select(2, 2), cpu.select(2, 1), cpu.select(2, 0)}, 2)
-    .contiguous();
-  FILE * f = fopen(path.c_str(), "wb");
-  if (!f) {
-    std::cerr << "Failed to open " << path << std::endl;
-    return;
-  }
-  fprintf(f, "P6\n%d %d\n255\n", W, H);
-  fwrite(rgb.data_ptr<uint8_t>(), 1, W * H * 3, f);
-  fclose(f);
-}
-
 DisplayMode FrameDisplay::mode() const {return mode_;}
 SDL_Window * FrameDisplay::window() const {return window_;}
 int FrameDisplay::win_width() const {return winW_;}

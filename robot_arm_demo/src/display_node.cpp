@@ -19,11 +19,9 @@
 
 #include <chrono>
 #include <cstdio>
-#include <cstring>
 #include <functional>
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
@@ -43,14 +41,14 @@ public:
   {
     this->declare_parameter<bool>("headless", false);
     this->declare_parameter<bool>("borderless", false);
-    this->declare_parameter<std::string>("record_path", "");
+    this->declare_parameter<bool>("use_cuda", true);
     this->declare_parameter<int>("window_x", -1);
     this->declare_parameter<int>("window_y", -1);
     this->declare_parameter<int>("max_window_width", 1920);
     this->declare_parameter<int>("max_window_height", 1080);
     headless_ = this->get_parameter("headless").as_bool();
     borderless_ = this->get_parameter("borderless").as_bool();
-    record_path_ = this->get_parameter("record_path").as_string();
+    use_cuda_ = this->get_parameter("use_cuda").as_bool();
     win_x_ = static_cast<int>(this->get_parameter("window_x").as_int());
     win_y_ = static_cast<int>(this->get_parameter("window_y").as_int());
     max_win_w_ = static_cast<int>(this->get_parameter("max_window_width").as_int());
@@ -59,7 +57,7 @@ public:
     auto qos = rclcpp::QoS(1).reliable();
 
     rclcpp::SubscriptionOptions sub_opts;
-    sub_opts.acceptable_buffer_backends = "any";
+    sub_opts.acceptable_buffer_backends = use_cuda_ ? "any" : "cpu";
     subscription_ = this->create_subscription<tensor_msgs::msg::ExperimentalTensor>(
       "image", qos,
       std::bind(&DisplayNode::tensor_callback, this, std::placeholders::_1),
@@ -69,21 +67,14 @@ public:
       event_timer_ = this->create_wall_timer(
         std::chrono::milliseconds(4),
         std::bind(&DisplayNode::pump_events, this));
-      label_ = make_text_bitmap("BRIDGE", 2, torch::kCPU);
+      label_text_ = use_cuda_ ? "CUDA" : "CPU";
+      label_ = make_text_bitmap(label_text_, 2, torch::kCPU);
     }
 
     RCLCPP_INFO(
-      this->get_logger(), "Display started (%s%s, waiting for first frame)",
-      headless_ ? "headless" : "CUDA-GL interop",
-      record_path_.empty() ? "" : ", recording");
-  }
-
-  ~DisplayNode() override
-  {
-    if (ffmpeg_pipe_) {
-      pclose(ffmpeg_pipe_);
-      RCLCPP_INFO(this->get_logger(), "Video saved to %s", record_path_.c_str());
-    }
+      this->get_logger(), "Display started (%s, backend=%s, waiting for first frame)",
+      headless_ ? "headless" : "windowed",
+      use_cuda_ ? "cuda" : "cpu");
   }
 
 private:
@@ -95,7 +86,7 @@ private:
 
     display_ = std::make_unique<FrameDisplay>();
     if (!display_->init(
-        w, h, headless_, /*use_cuda=*/true, false,
+        w, h, headless_, use_cuda_, false,
         max_win_w_, max_win_h_, win_x_, win_y_, borderless_))
     {
       RCLCPP_WARN(this->get_logger(), "Display init failed, falling back to headless");
@@ -104,7 +95,7 @@ private:
 
     RCLCPP_INFO(
       this->get_logger(), "Display initialized: %dx%d (%s, window %dx%d)",
-      w, h, headless_ ? "headless" : "CUDA-GL interop",
+      w, h, headless_ ? "headless" : (use_cuda_ ? "CUDA-GL interop" : "GL upload"),
       display_->win_width(), display_->win_height());
   }
 
@@ -152,54 +143,7 @@ private:
       display_->present(labeled);
     }
 
-    if (!record_path_.empty()) {
-      record_frame(frame, img_width_, img_height_);
-    }
-
     report_fps();
-  }
-
-  void record_frame(const at::Tensor & tensor, int w, int h)
-  {
-    auto now = std::chrono::steady_clock::now();
-    if (last_record_time_.time_since_epoch().count() > 0) {
-      double elapsed_ms = std::chrono::duration<double, std::milli>(
-        now - last_record_time_).count();
-      if (elapsed_ms < 16.0) {return;}
-    }
-    last_record_time_ = now;
-
-    if (!ffmpeg_pipe_) {
-      std::string cmd =
-        "ffmpeg -y -use_wallclock_as_timestamps 1"
-        " -f rawvideo -pixel_format bgra"
-        " -video_size " + std::to_string(w) + "x" + std::to_string(h) +
-        " -i pipe:0"
-        " -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p -r 60"
-        " " + record_path_ + " 2>/dev/null";
-      ffmpeg_pipe_ = popen(cmd.c_str(), "w");
-      if (!ffmpeg_pipe_) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to open ffmpeg pipe");
-        record_path_.clear();
-        return;
-      }
-      record_buf_.resize(static_cast<size_t>(w) * h * 4);
-      RCLCPP_INFO(
-        this->get_logger(), "Recording started: %s (%dx%d @ 60fps)",
-        record_path_.c_str(), w, h);
-    }
-
-    size_t frame_bytes = static_cast<size_t>(w) * h * 4;
-    if (tensor.is_cuda()) {
-      cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
-      cudaMemcpyAsync(
-        record_buf_.data(), tensor.data_ptr(), frame_bytes,
-        cudaMemcpyDeviceToHost, stream);
-      cudaStreamSynchronize(stream);
-    } else {
-      std::memcpy(record_buf_.data(), tensor.data_ptr(), frame_bytes);
-    }
-    fwrite(record_buf_.data(), 1, frame_bytes, ffmpeg_pipe_);
   }
 
   void report_fps()
@@ -210,12 +154,12 @@ private:
     if (elapsed < 1.0f) {return;}
 
     float fps = frame_count_ / elapsed;
-    const char * tag = headless_ ? "headless" : "bridge";
+    const char * tag = headless_ ? "headless" : (use_cuda_ ? "cuda" : "cpu");
     RCLCPP_INFO(this->get_logger(), "Display: %.1f fps | %s", fps, tag);
 
     if (!headless_) {
       char hud[64];
-      snprintf(hud, sizeof(hud), "BRIDGE | %.0f FPS", fps);
+      snprintf(hud, sizeof(hud), "%s | %.0f FPS", label_text_.c_str(), fps);
       label_ = make_text_bitmap(hud, 2, torch::kCPU);
     }
 
@@ -228,19 +172,19 @@ private:
   int frame_count_{0};
   std::chrono::steady_clock::time_point fps_timer_;
 
-  std::string record_path_;
-  FILE * ffmpeg_pipe_{nullptr};
-  std::vector<uint8_t> record_buf_;
-  std::chrono::steady_clock::time_point last_record_time_{};
-
   int img_width_{0}, img_height_{0};
   int win_x_, win_y_;
   int max_win_w_, max_win_h_;
   bool headless_;
   bool borderless_;
+  bool use_cuda_{true};
   std::unique_ptr<FrameDisplay> display_;
+  std::string label_text_;
   at::Tensor label_;
 };
 
 RCLCPP_COMPONENTS_REGISTER_NODE(DisplayNode)
+<<<<<<< HEAD
 
+=======
+>>>>>>> 5b90bad (resolve comments, update readme)

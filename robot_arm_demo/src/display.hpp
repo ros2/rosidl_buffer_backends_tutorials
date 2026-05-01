@@ -16,7 +16,6 @@
 #define DISPLAY_HPP_
 
 #include <torch/torch.h>
-#include <string>
 
 struct SDL_Window;
 typedef void * SDL_GLContext;
@@ -35,8 +34,6 @@ public:
     int win_x = -1, int win_y = -1, bool borderless = false);
   void present(const torch::Tensor & frame);
   bool poll_events();
-
-  static void save_ppm(const torch::Tensor & frame_bgra, const std::string & path);
 
   DisplayMode mode() const;
   SDL_Window * window() const;

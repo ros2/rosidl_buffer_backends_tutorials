@@ -68,7 +68,7 @@ private:
     torch::Tensor & frame, float cx, float cy,
     float hx, float hy, float angle,
     float col_r, float col_g, float col_b,
-    float lw, float outline_darkness);
+    float lw);
 
   // Animation time
   float time_ = 0.0f;

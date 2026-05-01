@@ -4,16 +4,20 @@ End-to-end tutorials for the [rosidl_buffer_backends](https://github.com/ros2/ro
 
 ## robot_arm_demo
 
-A ROS 2 demo that renders an SDF-based pencil-sketch robot arm animation entirely on the GPU via LibTorch tensor ops, publishes BGRA frames as `tensor_msgs/msg/ExperimentalTensor`, and displays them in an SDL2/OpenGL window with CUDA-GL interop.
+A ROS 2 demo that renders an SDF-based pencil-sketch robot arm animation with
+LibTorch tensor ops, publishes BGRA frames as `tensor_msgs/msg/ExperimentalTensor`,
+and displays them in an SDL2/OpenGL window.
 
-The demo uses the **`torch_conversions`** to transport frames as a first-class, DLPack-aligned tensor message. Under the hood, `cuda_buffer_backend` still carries the bytes zero-copy via CUDA IPC; the bridge provides the tensor metadata layer (shape, strides, dtype, device) as a standard ROS 2 message instead of piggybacking on `sensor_msgs/Image`.
+The demo uses **`torch_conversions`** to publish frames as a first-class tensor
+message. Under the hood, `cuda_buffer_backend` carries the frame bytes
+zero-copy via CUDA IPC when the CUDA path is enabled.
 
 Animation is frame-count driven (fixed dt = 1/60 s per frame), so low FPS results in slower but smooth playback rather than frame skipping.
 
 The demo exercises the full bridge pub/sub pipeline:
 
-1. **renderer_node** -- renders BGRA frames on the GPU using LibTorch SDF operations, allocates a `tensor_msgs::msg::ExperimentalTensor` via `torch_conversions::allocate_tensor_msg`, copies the rendered frame into it with `to_tensor_msg`, and publishes.
-2. **display_node** -- subscribes, wraps the received `Tensor` as an `at::Tensor` via `torch_conversions::from_input_tensor_msg` (routed through `at::fromDLPack`), renders into an SDL2/OpenGL window (with CUDA-GL interop), and reports FPS.
+1. **renderer_node** -- renders BGRA frames with LibTorch SDF operations, allocates a `tensor_msgs::msg::ExperimentalTensor` via `torch_conversions::allocate_tensor_msg`, copies the rendered frame into it with `to_tensor_msg`, and publishes.
+2. **display_node** -- subscribes, wraps the received `ExperimentalTensor` as an `at::Tensor` via `torch_conversions::from_input_tensor_msg`, renders into an SDL2/OpenGL window, and reports FPS.
 
 ### Dependencies
 
@@ -55,6 +59,20 @@ Arguments:
 - `width` (default `1920`), `height` (default `1080`) --- render resolution.
 - `headless` (default `false`) --- run without a display window.
 
+### Compare CUDA and CPU paths
+
+```bash
+ros2 launch robot_arm_demo robot_arm_compare.launch.py
+```
+
+This starts two renderer/display pairs side by side: the CUDA path renders and
+transports tensors through `torch_conversions` with CUDA acceleration, while
+the CPU path uses the same `torch_conversions` APIs with CPU tensors. Each
+display window labels the mode and FPS. By default, compare mode uses the
+same render resolution as the main launch (`width:=1920`, `height:=1080`)
+and scales each display window to `960x540`; pass `width:=W height:=H` to
+compare at another render resolution.
+
 ### Benchmark methodology
 
 Measured inter-process, headless mode (`headless:=true`), FastRTPS DDS:
@@ -65,22 +83,15 @@ ros2 launch robot_arm_demo robot_arm_demo.launch.py headless:=true width:=W heig
 
 ### Reference numbers
 
-These numbers were collected with the original `torch_buffer_backend`
-variant of this tutorial (pre-bridge) and are retained here as a baseline
-for comparison. Re-run on your hardware with the current bridge-based
-tutorial and fill in the third column.
+| Resolution | Image Size | `torch_conversions` + CUDA IPC | CPU fallback |
+|---|---:|---:|---:|
+| 1920x1080 | 7.9 MB | 116.6 FPS | 35.5 FPS |
+| 2560x1440 | 14.1 MB | 90.6 FPS | 21.3 FPS |
+| 3840x2160 | 31.6 MB | 59.5 FPS | 10.3 FPS |
 
-| Resolution | Image Size | Backend (`torch_buffer_backend`) | Bridge (`torch_conversions`) | CPU fallback |
-|---|---|---:|---:|---:|
-| 1920x1080 | 7.9 MB | 116.6 FPS | TBD | 35.5 FPS |
-| 2560x1440 | 14.1 MB | 90.6 FPS | TBD | 21.3 FPS |
-| 3840x2160 | 31.6 MB | 59.5 FPS | TBD | 10.3 FPS |
-
-Expected behavior: the bridge-based path should measure **within a few percent** of the original `torch_buffer_backend` column. Both paths end up going through the same `cuda_buffer_backend` IPC transport for the frame bytes; the only per-frame overhead the bridge adds over the backend approach is two small heap allocations (a `DLManagedTensor` + its context struct, ~120 bytes total) per publish and per subscribe, plus the metadata passes through `at::toDLPack` / `at::fromDLPack` rather than bespoke descriptor serialization. At MB-scale frame payloads, neither difference is measurable.
-
-If you see a large divergence, likely suspects are:
-- **CPU fallback**: something stopped `cuda_buffer_backend` from offering IPC (different user, different GPU, different host, or VMM unavailable). Check `ros2 topic info -v /image` and the backend discovery logs.
-- **Extra copy**: verify the renderer's `to_tensor_msg` path is the only copy; no intermediate CPU tensor should sit in the pipeline.
+The `torch_conversions` path keeps the frame bytes on the registered
+`rosidl::Buffer` backend, so the CUDA path goes through the same
+`cuda_buffer_backend` IPC transport used by lower-level buffer examples.
 
 ## License
 

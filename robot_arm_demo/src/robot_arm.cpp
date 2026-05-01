@@ -167,7 +167,7 @@ void RobotArmRenderer::draw_local_color_pencil_box(
   torch::Tensor & frame, float cx, float cy,
   float hx, float hy, float angle,
   float col_r, float col_g, float col_b,
-  float lw, float outline_darkness)
+  float lw)
 {
   float extent = std::sqrt(hx * hx + hy * hy);
   float margin = lw * 4.0f + 5.0f;    // extra margin for fill sigmoid edge
@@ -769,7 +769,7 @@ void RobotArmRenderer::render_cubes(torch::Tensor & frame)
 
         // Color pencil fill with hatching + colored outline (localized)
     draw_local_color_pencil_box(frame, c.x, c.y, c.size, c.size, c.angle,
-                                     c.r, c.g, c.b, 1.8f, PENCIL_DARK);
+                                     c.r, c.g, c.b, 1.8f);
 
         // Dark label (white on colored background)
     auto & bmp = label_bmps_[i];
@@ -885,7 +885,7 @@ torch::Tensor RobotArmRenderer::render_frame()
     if (!c.held) {continue;}
 
     draw_local_color_pencil_box(frame, c.x, c.y, c.size, c.size, c.angle,
-                                     c.r, c.g, c.b, 1.8f, PENCIL_DARK);
+                                     c.r, c.g, c.b, 1.8f);
 
     auto & bmp = label_bmps_[i];
     int bh = bmp.size(0), bw = bmp.size(1);
