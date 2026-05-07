@@ -19,6 +19,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
@@ -66,11 +67,11 @@ private:
     std::optional<c10::DeviceType> storage_device =
       use_cuda_ ? std::optional<c10::DeviceType>(c10::kCUDA) :
       std::optional<c10::DeviceType>(c10::kCPU);
-    tensor_msgs::msg::ExperimentalTensor msg = torch_conversions::allocate_tensor_msg(
+    auto msg = torch_conversions::allocate_tensor_msg(
       {height_, width_, 4}, torch::kByte, storage_device);
-    torch_conversions::to_tensor_msg(msg, frame);
+    torch_conversions::to_tensor_msg(*msg, frame);
 
-    publisher_->publish(msg);
+    publisher_->publish(std::move(msg));
     if (use_cuda_) {
       c10::cuda::CUDACachingAllocator::emptyCache();
     }
