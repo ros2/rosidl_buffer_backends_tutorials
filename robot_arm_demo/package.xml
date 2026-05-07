@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>robot_arm_demo</name>
+  <version>0.0.0</version>
+  <description>
+    GPU-rendered frames published as tensor_msgs/ExperimentalTensor and
+    delivered via the cuda_buffer_backend zero-copy transport, received
+    and displayed by a second node using torch_conversions.
+  </description>
+
+  <maintainer email="yuankunz@nvidia.com">Yuankun Zhu</maintainer>
+  <license>Apache-2.0</license>
+  <author email="yuankunz@nvidia.com">Yuankun Zhu</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>libglew-dev</depend>
+  <depend>libtorch_vendor</depend>
+  <depend>libx11-dev</depend>
+  <depend>nvidia-cuda-dev</depend>
+  <depend>opengl</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>sdl2</depend>
+  <depend>torch_conversions</depend>
+  <depend>tensor_msgs</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

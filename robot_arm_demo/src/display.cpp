@@ -1,0 +1,341 @@
+// Copyright 2026 Open Source Robotics Foundation, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "display.hpp"
+#include <GL/glew.h>
+#include <SDL.h>
+#include <SDL_opengl.h>
+#include <SDL_syswm.h>
+#include <X11/Xlib.h>
+#include <X11/Xatom.h>
+#include <algorithm>
+#include <iostream>
+
+#ifdef USE_CUDA_GL_INTEROP
+#include <cuda_runtime.h>
+#include <cuda_gl_interop.h>
+#endif
+
+static void disable_compositor_shadow(SDL_Window * window)
+{
+  SDL_SysWMinfo info;
+  SDL_VERSION(&info.version);
+  if (!SDL_GetWindowWMInfo(window, &info)) {return;}
+  if (info.subsystem != SDL_SYSWM_X11) {return;}
+
+  Display * dpy = info.info.x11.display;
+  Window win = info.info.x11.window;
+
+  Atom gtk_frame = XInternAtom(dpy, "_GTK_FRAME_EXTENTS", False);
+  long extents[4] = {0, 0, 0, 0};  // NOLINT(runtime/int) -- X11 format 32 requires long
+  XChangeProperty(dpy, win, gtk_frame, XA_CARDINAL, 32,
+                    PropModeReplace, reinterpret_cast<unsigned char *>(extents), 4);
+
+  Atom kde_shadow = XInternAtom(dpy, "_KDE_NET_WM_SHADOW", False);
+  XDeleteProperty(dpy, win, kde_shadow);
+
+  XFlush(dpy);
+}
+
+static const char * vert_src =
+  R"(
+#version 330 core
+const vec2 pos[4] = vec2[](vec2(-1,-1), vec2(1,-1), vec2(1,1), vec2(-1,1));
+const vec2 uv[4]  = vec2[](vec2(0,1), vec2(1,1), vec2(1,0), vec2(0,0));
+out vec2 v_uv;
+void main() {
+    gl_Position = vec4(pos[gl_VertexID], 0, 1);
+    v_uv = uv[gl_VertexID];
+}
+)";
+
+static const char * frag_src =
+  R"(
+#version 330 core
+uniform sampler2D tex;
+in vec2 v_uv;
+out vec4 fragColor;
+void main() { fragColor = texture(tex, v_uv); }
+)";
+
+static GLuint compile_shader(GLenum type, const char * src)
+{
+  GLuint s = glCreateShader(type);
+  glShaderSource(s, 1, &src, nullptr);
+  glCompileShader(s);
+  GLint ok;
+  glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+  if (!ok) {
+    char log[512];
+    glGetShaderInfoLog(s, 512, nullptr, log);
+    std::cerr << "Shader compile error: " << log << std::endl;
+  }
+  return s;
+}
+
+FrameDisplay::FrameDisplay() {}
+
+FrameDisplay::~FrameDisplay()
+{
+  if (shader_program_) {glDeleteProgram(shader_program_);}
+  if (tex_) {glDeleteTextures(1, &tex_);}
+  if (vao_) {glDeleteVertexArrays(1, &vao_);}
+#ifdef USE_CUDA_GL_INTEROP
+  if (cuda_pbo_) {
+    cudaGraphicsUnregisterResource(reinterpret_cast<cudaGraphicsResource *>(cuda_pbo_));
+  }
+  if (pbo_) {glDeleteBuffers(1, &pbo_);}
+#endif
+  if (sdl_texture_) {SDL_DestroyTexture(reinterpret_cast<SDL_Texture *>(sdl_texture_));}
+  if (sdl_renderer_) {SDL_DestroyRenderer(reinterpret_cast<SDL_Renderer *>(sdl_renderer_));}
+  if (gl_ctx_) {SDL_GL_DeleteContext(gl_ctx_);}
+  if (window_) {SDL_DestroyWindow(window_);}
+  SDL_Quit();
+}
+
+bool FrameDisplay::init(
+  int width, int height, bool headless, bool use_cuda, bool fullscreen,
+  int max_win_w, int max_win_h, int win_x, int win_y, bool borderless)
+{
+  W_ = width;
+  H_ = height;
+  winW_ = W_;
+  winH_ = H_;
+  if (max_win_w > 0 && max_win_h > 0 && (W_ > max_win_w || H_ > max_win_h)) {
+    float scale = std::min(static_cast<float>(max_win_w) / W_,
+                               static_cast<float>(max_win_h) / H_);
+    winW_ = static_cast<int>(W_ * scale);
+    winH_ = static_cast<int>(H_ * scale);
+  }
+
+  int pos_x = (win_x >= 0) ? win_x : SDL_WINDOWPOS_CENTERED;
+  int pos_y = (win_y >= 0) ? win_y : SDL_WINDOWPOS_CENTERED;
+
+  if (headless) {
+    mode_ = DisplayMode::Headless;
+    std::cout << "Display mode: Headless" << std::endl;
+    return true;
+  }
+
+  bool no_shadow = (win_x >= 0);
+  if (no_shadow) {
+    SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "1");
+  }
+
+  if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+    std::cerr << "SDL_Init failed: " << SDL_GetError() << std::endl;
+    mode_ = DisplayMode::Headless;
+    return true;
+  }
+
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+
+  Uint32 win_flags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN;
+  if (fullscreen) {win_flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;}
+  if (borderless) {win_flags |= SDL_WINDOW_BORDERLESS;}
+
+  window_ = SDL_CreateWindow("Robot Arm Demo",
+        pos_x, pos_y,
+        winW_, winH_, win_flags);
+
+  if (!window_) {
+    std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
+    Uint32 sw_flags = SDL_WINDOW_SHOWN;
+    if (fullscreen) {sw_flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;}
+    if (borderless) {sw_flags |= SDL_WINDOW_BORDERLESS;}
+    window_ = SDL_CreateWindow("Robot Arm Demo",
+            pos_x, pos_y,
+            winW_, winH_, sw_flags);
+    if (!window_) {
+      std::cerr << "SDL software window also failed" << std::endl;
+      mode_ = DisplayMode::Headless;
+      return true;
+    }
+    if (no_shadow) {disable_compositor_shadow(window_);}
+    mode_ = DisplayMode::SoftwareSDL;
+    sdl_renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_SOFTWARE);
+    sdl_texture_ = SDL_CreateTexture(
+      reinterpret_cast<SDL_Renderer *>(sdl_renderer_),
+      SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, W_, H_);
+    std::cout << "Display mode: SDL Software" << std::endl;
+    return true;
+  }
+
+  if (no_shadow) {disable_compositor_shadow(window_);}
+
+  gl_ctx_ = SDL_GL_CreateContext(window_);
+  if (!gl_ctx_) {
+    std::cerr << "GL context creation failed: " << SDL_GetError() << std::endl;
+    SDL_DestroyWindow(window_);
+    window_ = nullptr;
+    mode_ = DisplayMode::Headless;
+    return true;
+  }
+
+  glewExperimental = GL_TRUE;
+  GLenum err = glewInit();
+  if (err != GLEW_OK) {
+    std::cerr << "GLEW init failed: " << glewGetErrorString(err) << std::endl;
+    mode_ = DisplayMode::Headless;
+    return true;
+  }
+
+  SDL_GL_SetSwapInterval(1);
+
+  std::cout << "OpenGL: " << glGetString(GL_VERSION) << std::endl;
+  std::cout << "Renderer: " << glGetString(GL_RENDERER) << std::endl;
+
+#ifdef USE_CUDA_GL_INTEROP
+  if (use_cuda) {
+    mode_ = DisplayMode::CudaGL;
+    std::cout << "Display mode: CUDA-GL Interop" << std::endl;
+  } else  // NOLINT(readability/braces)
+#endif
+  {
+    mode_ = DisplayMode::IntelGL;
+    std::cout << "Display mode: Direct GL Upload" << std::endl;
+  }
+
+  init_gl_resources();
+  return true;
+}
+
+void FrameDisplay::init_gl_resources()
+{
+  GLuint vs = compile_shader(GL_VERTEX_SHADER, vert_src);
+  GLuint fs = compile_shader(GL_FRAGMENT_SHADER, frag_src);
+  shader_program_ = glCreateProgram();
+  glAttachShader(shader_program_, vs);
+  glAttachShader(shader_program_, fs);
+  glLinkProgram(shader_program_);
+  glDeleteShader(vs);
+  glDeleteShader(fs);
+
+  GLint ok;
+  glGetProgramiv(shader_program_, GL_LINK_STATUS, &ok);
+  if (!ok) {
+    char log[512];
+    glGetProgramInfoLog(shader_program_, 512, nullptr, log);
+    std::cerr << "Shader link error: " << log << std::endl;
+  }
+
+  glGenVertexArrays(1, &vao_);
+
+  glGenTextures(1, &tex_);
+  glBindTexture(GL_TEXTURE_2D, tex_);
+  glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, W_, H_);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+#ifdef USE_CUDA_GL_INTEROP
+  if (mode_ == DisplayMode::CudaGL) {
+    glGenBuffers(1, &pbo_);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, W_ * H_ * 4, nullptr, GL_STREAM_DRAW);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    cudaGraphicsResource * resource;
+    cudaGraphicsGLRegisterBuffer(&resource, pbo_, cudaGraphicsMapFlagsWriteDiscard);
+    cuda_pbo_ = resource;
+  }
+#endif
+}
+
+void FrameDisplay::present(const torch::Tensor & frame)
+{
+  switch (mode_) {
+    case DisplayMode::CudaGL:
+    case DisplayMode::IntelGL:
+      present_gl(frame);
+      break;
+    case DisplayMode::SoftwareSDL:
+      present_sdl_software(frame);
+      break;
+    case DisplayMode::Headless:
+      break;
+  }
+}
+
+void FrameDisplay::present_gl(const torch::Tensor & frame)
+{
+  glBindTexture(GL_TEXTURE_2D, tex_);
+#ifdef USE_CUDA_GL_INTEROP
+  if (mode_ == DisplayMode::CudaGL && frame.is_cuda()) {
+    cudaGraphicsResource * resource = reinterpret_cast<cudaGraphicsResource *>(cuda_pbo_);
+    cudaGraphicsMapResources(1, &resource, 0);
+    void * d_ptr; size_t sz;
+    cudaGraphicsResourceGetMappedPointer(&d_ptr, &sz, resource);
+    cudaMemcpy(d_ptr, frame.data_ptr(), W_ * H_ * 4, cudaMemcpyDeviceToDevice);
+    cudaGraphicsUnmapResources(1, &resource, 0);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, W_, H_,
+                        GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, 0);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+  } else  // NOLINT(readability/braces)
+#endif
+  {
+    auto cpu_frame = frame.to(torch::kCPU).contiguous();
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, W_, H_,
+                        GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV,
+                        cpu_frame.data_ptr<uint8_t>());
+  }
+  draw_fullscreen_quad();
+  SDL_GL_SwapWindow(window_);
+}
+
+void FrameDisplay::present_sdl_software(const torch::Tensor & frame)
+{
+  auto cpu = frame.to(torch::kCPU).contiguous();
+  auto argb = torch::stack({
+    cpu.select(2, 3),
+    cpu.select(2, 2),
+    cpu.select(2, 1),
+    cpu.select(2, 0)
+    }, 2).contiguous();
+
+  SDL_UpdateTexture(
+    reinterpret_cast<SDL_Texture *>(sdl_texture_), nullptr,
+    argb.data_ptr<uint8_t>(), W_ * 4);
+  SDL_RenderCopy(
+    reinterpret_cast<SDL_Renderer *>(sdl_renderer_),
+    reinterpret_cast<SDL_Texture *>(sdl_texture_), nullptr, nullptr);
+  SDL_RenderPresent(reinterpret_cast<SDL_Renderer *>(sdl_renderer_));
+}
+
+void FrameDisplay::draw_fullscreen_quad()
+{
+  glClear(GL_COLOR_BUFFER_BIT);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, tex_);
+  glUseProgram(shader_program_);
+  glBindVertexArray(vao_);
+  glUniform1i(glGetUniformLocation(shader_program_, "tex"), 0);
+  glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+}
+
+bool FrameDisplay::poll_events()
+{
+  if (mode_ == DisplayMode::Headless) {return true;}
+  SDL_Event e;
+  while (SDL_PollEvent(&e)) {
+    if (e.type == SDL_QUIT) {return false;}
+    if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {return false;}
+  }
+  return true;
+}
+
+int FrameDisplay::win_width() const {return winW_;}
+int FrameDisplay::win_height() const {return winH_;}

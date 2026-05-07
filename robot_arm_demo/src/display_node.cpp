@@ -1,0 +1,183 @@
+// Copyright 2026 Open Source Robotics Foundation, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <torch/torch.h>
+
+#include <chrono>
+#include <cstdio>
+#include <functional>
+#include <memory>
+#include <string>
+
+#include "rclcpp/rclcpp.hpp"
+#include "rclcpp_components/register_node_macro.hpp"
+#include "torch_conversions/torch_conversions.hpp"
+#include "tensor_msgs/msg/experimental_tensor.hpp"
+#include "display.hpp"
+#include "font.hpp"
+
+class DisplayNode : public rclcpp::Node
+{
+public:
+  explicit DisplayNode(const rclcpp::NodeOptions & options)
+  : Node("display", options),
+    frame_count_(0),
+    fps_timer_(std::chrono::steady_clock::now()),
+    headless_(false)
+  {
+    this->declare_parameter<bool>("headless", false);
+    this->declare_parameter<bool>("borderless", false);
+    this->declare_parameter<bool>("use_cuda", true);
+    this->declare_parameter<int>("window_x", -1);
+    this->declare_parameter<int>("window_y", -1);
+    this->declare_parameter<int>("max_window_width", 1920);
+    this->declare_parameter<int>("max_window_height", 1080);
+    headless_ = this->get_parameter("headless").as_bool();
+    borderless_ = this->get_parameter("borderless").as_bool();
+    use_cuda_ = this->get_parameter("use_cuda").as_bool();
+    win_x_ = static_cast<int>(this->get_parameter("window_x").as_int());
+    win_y_ = static_cast<int>(this->get_parameter("window_y").as_int());
+    max_win_w_ = static_cast<int>(this->get_parameter("max_window_width").as_int());
+    max_win_h_ = static_cast<int>(this->get_parameter("max_window_height").as_int());
+
+    auto qos = rclcpp::QoS(1).reliable();
+
+    rclcpp::SubscriptionOptions sub_opts;
+    sub_opts.acceptable_buffer_backends = use_cuda_ ? "any" : "cpu";
+    subscription_ = this->create_subscription<tensor_msgs::msg::ExperimentalTensor>(
+      "image", qos,
+      std::bind(&DisplayNode::tensor_callback, this, std::placeholders::_1),
+      sub_opts);
+
+    if (!headless_) {
+      event_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(4),
+        std::bind(&DisplayNode::pump_events, this));
+      label_text_ = use_cuda_ ? "CUDA" : "CPU";
+      label_ = make_text_bitmap(label_text_, 2, torch::kCPU);
+    }
+
+    RCLCPP_INFO(
+      this->get_logger(), "Display started (%s, backend=%s, waiting for first frame)",
+      headless_ ? "headless" : "windowed",
+      use_cuda_ ? "cuda" : "cpu");
+  }
+
+private:
+  void ensure_display(int w, int h)
+  {
+    if (display_ && img_width_ == w && img_height_ == h) {return;}
+    img_width_ = w;
+    img_height_ = h;
+
+    display_ = std::make_unique<FrameDisplay>();
+    if (!display_->init(
+        w, h, headless_, use_cuda_, false,
+        max_win_w_, max_win_h_, win_x_, win_y_, borderless_))
+    {
+      RCLCPP_WARN(this->get_logger(), "Display init failed, falling back to headless");
+      headless_ = true;
+    }
+
+    RCLCPP_INFO(
+      this->get_logger(), "Display initialized: %dx%d (%s, window %dx%d)",
+      w, h, headless_ ? "headless" : (use_cuda_ ? "CUDA-GL interop" : "GL upload"),
+      display_->win_width(), display_->win_height());
+  }
+
+  void pump_events()
+  {
+    if (display_ && !display_->poll_events()) {rclcpp::shutdown();}
+  }
+
+  static void stamp_label(at::Tensor & frame, const at::Tensor & label)
+  {
+    int lh = label.size(0), lw = label.size(1);
+    int fh = frame.size(0), fw = frame.size(1);
+    if (lh > fh || lw > fw) {return;}
+    int y0 = 10, x0 = 16;
+    if (y0 + lh > fh) {return;}
+    auto roi = frame.index({
+      torch::indexing::Slice(y0, y0 + lh),
+      torch::indexing::Slice(x0, x0 + lw),
+      torch::indexing::Slice(0, 3)
+    });
+    auto alpha = label.unsqueeze(2);
+    if (frame.is_cuda()) {alpha = alpha.to(frame.device());}
+    roi.copy_(roi * (1.0f - alpha));
+  }
+
+  void tensor_callback(const tensor_msgs::msg::ExperimentalTensor::SharedPtr msg)
+  {
+    if (msg->shape.size() < 3) {
+      RCLCPP_ERROR(
+        this->get_logger(), "Expected rank-3 tensor, got rank=%zu",
+        msg->shape.size());
+      return;
+    }
+    int h = static_cast<int>(msg->shape[0]);
+    int w = static_cast<int>(msg->shape[1]);
+    ensure_display(w, h);
+
+    auto guard = torch_conversions::set_stream();
+    const tensor_msgs::msg::ExperimentalTensor & const_msg = *msg;
+    at::Tensor frame = torch_conversions::from_input_tensor_msg(const_msg, /*clone=*/false);
+
+    if (!headless_ && display_) {
+      auto labeled = frame.clone();
+      stamp_label(labeled, label_);
+      display_->present(labeled);
+    }
+
+    report_fps();
+  }
+
+  void report_fps()
+  {
+    frame_count_++;
+    auto now = std::chrono::steady_clock::now();
+    float elapsed = std::chrono::duration<float>(now - fps_timer_).count();
+    if (elapsed < 1.0f) {return;}
+
+    float fps = frame_count_ / elapsed;
+    const char * tag = headless_ ? "headless" : (use_cuda_ ? "cuda" : "cpu");
+    RCLCPP_INFO(this->get_logger(), "Display: %.1f fps | %s", fps, tag);
+
+    if (!headless_) {
+      char hud[64];
+      snprintf(hud, sizeof(hud), "%s | %.0f FPS", label_text_.c_str(), fps);
+      label_ = make_text_bitmap(hud, 2, torch::kCPU);
+    }
+
+    frame_count_ = 0;
+    fps_timer_ = now;
+  }
+
+  rclcpp::Subscription<tensor_msgs::msg::ExperimentalTensor>::SharedPtr subscription_;
+  rclcpp::TimerBase::SharedPtr event_timer_;
+  int frame_count_{0};
+  std::chrono::steady_clock::time_point fps_timer_;
+
+  int img_width_{0}, img_height_{0};
+  int win_x_, win_y_;
+  int max_win_w_, max_win_h_;
+  bool headless_;
+  bool borderless_;
+  bool use_cuda_{true};
+  std::unique_ptr<FrameDisplay> display_;
+  std::string label_text_;
+  at::Tensor label_;
+};
+
+RCLCPP_COMPONENTS_REGISTER_NODE(DisplayNode)
