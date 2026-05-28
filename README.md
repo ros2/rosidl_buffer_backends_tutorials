@@ -38,8 +38,7 @@ workspace's `src/` directory:
 rosdep install --from-paths src --ignore-src -y \
   --skip-keys "fastcdr rti-connext-dds-7.7.0 urdfdom_headers qt6-svg-dev"
 
-# Build the bridge + its CUDA transport dependency, source, then the demo.
-colcon build --symlink-install --packages-up-to torch_conversions && \
+colcon build --symlink-install --packages-up-to cuda_buffer_backend && \
   source install/setup.sh && \
   colcon build --symlink-install --packages-up-to robot_arm_demo && \
   source install/setup.sh
