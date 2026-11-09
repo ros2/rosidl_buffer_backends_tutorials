@@ -28,6 +28,8 @@ def generate_launch_description():
     arguments = [
         DeclareLaunchArgument('model_file_path'),
         DeclareLaunchArgument('data_file_paths', default_value="['']"),
+        DeclareLaunchArgument('backend_libraries', default_value="['']",
+                              description='extra delegate libraries to load at run time'),
         DeclareLaunchArgument('expected_file_path', default_value='',
                               description='expected_outputs.bin, to check every action'),
         DeclareLaunchArgument('transport', default_value='cuda',
@@ -57,6 +59,7 @@ def generate_launch_description():
         parameters=[{
             'model_file_path': arg('model_file_path'),
             'data_file_paths': arg('data_file_paths'),
+            'backend_libraries': arg('backend_libraries'),
             # With state_shape:='[0]' the camera sends no state, so the policy takes the image.
             # Compared as a list, so spellings such as '[ 0 ]' count too.
             'input_topics': PythonExpression([

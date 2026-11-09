@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <cuda_runtime_api.h>
+#include <dlfcn.h>
 #include <executorch/extension/cuda/device_guard.h>
 #include <executorch/extension/module/module.h>
 #include <unistd.h>
@@ -66,6 +67,8 @@ public:
   : Node("policy", options)
   {
     const auto model = declare_parameter<std::string>("model_file_path", "");
+    const auto backend_libraries = without_empty(declare_parameter<std::vector<std::string>>(
+        "backend_libraries", std::vector<std::string>{}));
     const auto data_files = without_empty(declare_parameter<std::vector<std::string>>(
         "data_file_paths", std::vector<std::string>{}));
     method_ = declare_parameter<std::string>("method_name", "forward");
@@ -82,6 +85,14 @@ public:
       throw std::invalid_argument("policy_node: report_every must be positive");
     }
 
+    // A delegate registers itself when its library loads, so load them before the program.
+    // The handles are never closed: ExecuTorch keeps pointers into a registered library
+    // and cannot unregister it.
+    for (const auto & library : backend_libraries) {
+      if (dlopen(library.c_str(), RTLD_NOW | RTLD_LOCAL) == nullptr) {
+        throw std::runtime_error("policy_node: cannot load " + library + ": " + dlerror());
+      }
+    }
     module_ = std::make_unique<Module>(model, data_files);
     const auto meta = module_->method_meta(method_);
     if (!meta.ok()) {

@@ -147,14 +147,57 @@ ros2 launch executorch_policy_demo policy_demo.launch.py \
 
 Launch arguments:
 
-- `model_file_path`, `data_file_paths`: the program and its data files. A program
-  runs as native code in the node's process, so load only files you trust.
+- `model_file_path`, `data_file_paths`, `backend_libraries`: the program, its
+  data files, and extra delegate libraries to load at run time. A delegate
+  library registers with the shared ExecuTorch runtime it links, so it must be
+  built for the release `executorch_cuda_vendor` installs, and a GPU delegate
+  must queue its work on the calling thread's per-thread default stream, as the
+  CUDA backend does here. Programs and libraries run as native code in the
+  node's process, so load only files you trust.
 - `transport`: `cuda` or `cpu`.
 - `format` (`float_chw` or `byte_hwc`), `width`, `height`, `channels`: the frame.
 - `state_shape`: the robot state, `[0]` for a program that takes only the image.
 - `frames`, `warmup`: measured frames, and frames sent before them.
 - `expected_file_path`: the outputs to check every action against.
 - `report_every`: runs between `POLICY` lines.
+
+## TensorRT
+
+With Torch-TensorRT 2.15, `--backend tensorrt` exports `tiny_policy_tensorrt`:
+TensorRT runs the network and the CUDA backend joins the image features and the
+robot state, so the program uses both. `torch_tensorrt[executorch]` installs
+PyTorch, TensorRT, the CUDA build of ExecuTorch and the TensorRT delegate
+library, and the policy node loads that library at run time from
+`backend_libraries`. The delegate in Torch-TensorRT 2.15 is built for ExecuTorch
+1.6, the release `executorch_cuda_vendor` installs, and queues its work on the
+per-thread default stream, as that parameter requires. The install is pinned to
+2.15 for that reason. A later release brings a delegate for a later ExecuTorch,
+so move this pin together with the vendor's ExecuTorch pin. The split puts both
+backends in one program and is not tuned for speed. `--stats` with no sizes
+skips the frame_stats programs. From this package's directory:
+
+```bash
+python3 -m venv ~/trt-venv && source ~/trt-venv/bin/activate
+pip install "torch_tensorrt[executorch]==2.15.*"
+python scripts/export_demo_models.py ~/models --backend tensorrt --stats
+TRT_LIB=$(python -c "import importlib.util as u, os; print(os.path.join(u.find_spec( \
+'torch_tensorrt_executorch_runtime').submodule_search_locations[0], 'lib', \
+'libexecutorch_backend_tensorrt.so'))")
+deactivate
+ros2 launch executorch_policy_demo policy_demo.launch.py \
+  model_file_path:=$HOME/models/tiny_policy_tensorrt/model.pte \
+  data_file_paths:="['$HOME/models/tiny_policy_tensorrt/aoti_cuda_blob.ptd']" \
+  backend_libraries:="['${TRT_LIB:?}']" \
+  expected_file_path:=$HOME/models/tiny_policy_tensorrt/expected_outputs.bin \
+  transport:=cuda
+```
+
+Without `backend_libraries`, the node cannot load this program. The node loads
+the delegate library from `~/trt-venv` at run time, so keep that venv. The
+TensorRT engine in the program only loads with the TensorRT version that built
+it, so export again after changing the venv. A TensorRT engine runs on the GPU
+number it was exported on, 0 with this script, so export with the same
+`CUDA_VISIBLE_DEVICES` as the node.
 
 ## Limits
 

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Export the demo programs for the ExecuTorch CUDA backend.
+Export the demo programs for the CUDA backend, or for TensorRT and CUDA.
 
 tiny_policy: image [1, 3, H, W] float and state [1, 14] -> action [1, 100, 14],
     the input and output shapes of a LeRobot ACT policy, with a small network.
@@ -27,7 +27,10 @@ the GPU that runs the program: the CUDA backend compiles kernels for it.
 Each program directory also gets expected_outputs.bin: the outputs for every
 frame camera_node renders, which the camera checks each action against.
 
-Usage: python export_demo_models.py OUT_DIR [--stats HxW ...]
+With --backend tensorrt, tiny_policy is compiled by Torch-TensorRT, except for
+the concatenation, which the CUDA backend runs. That needs torch-tensorrt 2.15.
+
+Usage: python export_demo_models.py OUT_DIR [--stats HxW ...] [--backend cuda|tensorrt]
 """
 
 import argparse
@@ -90,25 +93,45 @@ def robot_state(index, shape):
     return torch.where(element % 2 == 0, angle.cos(), angle.sin()).float().reshape(shape)
 
 
-def export(module, camera_inputs, out, name):
+def backend_config():
+    return ExecutorchBackendConfig(
+        memory_planning_pass=MemoryPlanningPass(
+            alloc_graph_input=False, alloc_graph_output=False),
+        propagate_device_config=PropagateDeviceConfig(
+            skip_h2d_for_method_inputs=True, skip_d2h_for_method_outputs=True),
+        enable_non_cpu_memory_planning=True,
+    )
+
+
+def cuda_partitioner():
+    return CudaPartitioner([CudaBackend.generate_method_name_compile_spec('forward')])
+
+
+def export(module, camera_inputs, out, name, backend='cuda'):
     directory = os.path.join(out, name)
     os.makedirs(directory, exist_ok=True)
     module = module.cuda().eval()
+    example = camera_inputs(0)
     with torch.no_grad():
         expected = [module(*camera_inputs(index)).flatten() for index in range(FRAME_PERIOD)]
-        program = torch.export.export(module, camera_inputs(0))
-        partitioner = CudaPartitioner([CudaBackend.generate_method_name_compile_spec('forward')])
-        edge = to_edge_transform_and_lower(program, partitioner=[partitioner])
-        executorch_program = edge.to_executorch(ExecutorchBackendConfig(
-            memory_planning_pass=MemoryPlanningPass(
-                alloc_graph_input=False, alloc_graph_output=False),
-            propagate_device_config=PropagateDeviceConfig(
-                skip_h2d_for_method_inputs=True, skip_d2h_for_method_outputs=True),
-            enable_non_cpu_memory_planning=True,
-        ))
-        with open(os.path.join(directory, 'model.pte'), 'wb') as f:
-            executorch_program.write_to_file(f)
-        executorch_program.write_tensor_data_to_file(directory)
+        program = torch.export.export(module, example)
+        if backend == 'tensorrt':
+            import torch_tensorrt
+            # The concatenation stays out of TensorRT, so both backends run.
+            compiled = torch_tensorrt.dynamo.compile(
+                program, arg_inputs=example, min_block_size=1,
+                torch_executed_ops={'torch.ops.aten.cat.default'},
+                # The camera compares with full FP32 outputs, closer than TF32 rounding.
+                disable_tf32=True)
+            torch_tensorrt.save(
+                compiled, os.path.join(directory, 'model.pte'), output_format='executorch',
+                partitioners=[cuda_partitioner()], backend_config=backend_config())
+        else:
+            edge = to_edge_transform_and_lower(program, partitioner=[cuda_partitioner()])
+            executorch_program = edge.to_executorch(backend_config())
+            with open(os.path.join(directory, 'model.pte'), 'wb') as f:
+                executorch_program.write_to_file(f)
+            executorch_program.write_tensor_data_to_file(directory)
         # Last, so a failed export does not leave new outputs next to an old program.
         torch.cat(expected).float().cpu().numpy().tofile(
             os.path.join(directory, 'expected_outputs.bin'))
@@ -129,15 +152,18 @@ def main():
     parser.add_argument('--stats', nargs='*', type=resolution,
                         default=[(1080, 1920), (2160, 3840)],
                         help='frame_stats resolutions as HxW')
+    parser.add_argument('--backend', choices=['cuda', 'tensorrt'], default='cuda',
+                        help='backend for tiny_policy')
     args = parser.parse_args()
 
     torch.manual_seed(0)
     # The camera checks actions with an FP32 tolerance, and cuDNN may otherwise pick TF32.
     torch.backends.cudnn.allow_tf32 = False
+    name = 'tiny_policy' if args.backend == 'cuda' else f'tiny_policy_{args.backend}'
     export(TinyPolicy(),
            lambda index: (camera_frame(index, (1, 3, 480, 640), torch.float32),
                           robot_state(index, (1, 14))),
-           args.out, 'tiny_policy')
+           args.out, name, args.backend)
     for height, width in args.stats:
         export(FrameStats(),
                lambda index: (camera_frame(index, (height, width, 4), torch.uint8),),

@@ -57,12 +57,14 @@ add_library(${PROJECT_NAME}_policy SHARED src/policy_node.cpp)
 target_link_libraries(${PROJECT_NAME}_policy
   executorch_conversions::executorch_conversions
   executorch::extension_cuda
+  ${CMAKE_DL_LIBS}
   CUDA::cudart
   rclcpp::rclcpp
   rclcpp_components::component
   ${tensor_msgs_TARGETS}
   # The node references no symbol in these libraries. They register operators and
   # delegates when loaded, and the ExecuTorch package keeps them linked for that.
+  # Other delegates load at run time from backend_libraries.
   executorch::kernels_optimized
   executorch::backend_cuda)
 rclcpp_components_register_node(${PROJECT_NAME}_policy
