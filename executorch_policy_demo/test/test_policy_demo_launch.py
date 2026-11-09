@@ -29,8 +29,9 @@ import launch_testing.actions
 import launch_testing.asserts
 import pytest
 
-# The cases are skipped when this is unset, since exporting needs PyTorch and a GPU. Set
-# it to an exported tiny_policy directory (see scripts/export_demo_models.py).
+# The cases other than tensorrt are skipped when this is unset, since exporting needs
+# PyTorch and a GPU. Set it to an exported tiny_policy directory (see
+# scripts/export_demo_models.py).
 MODEL_DIR = os.environ.get('EXECUTORCH_POLICY_DEMO_TEST_MODEL_DIR', '')
 EXPECTED = os.path.join(MODEL_DIR, 'expected_outputs.bin')
 # kFramePeriod in frame_kernel.hpp: the expected outputs hold one block per frame of it.
@@ -39,6 +40,10 @@ FRAME_PERIOD = 256
 FRAMES = 240
 WARMUP = 20
 REPORT_EVERY = 20
+# The exported tiny_policy_tensorrt directory and the TensorRT delegate library, as in
+# the README's TensorRT section. Their case is skipped unless both are given.
+TENSORRT_DIR = os.environ.get('EXECUTORCH_POLICY_DEMO_TEST_TENSORRT_DIR', '')
+TENSORRT_LIBRARY = os.environ.get('EXECUTORCH_POLICY_DEMO_TEST_TENSORRT_LIBRARY', '')
 CAMERA = 'camera_node'
 POLICY = 'policy_node'
 CHECKED = ('checked=yes wrong_actions=0 ', CAMERA)
@@ -46,7 +51,7 @@ REFUSED = ('policy: skipping a message on input', POLICY)
 IN_PLACE = [CHECKED, ('action_backend=cuda ', CAMERA)]
 # The staged copies every policy report must show: none in place, and on host messages
 # the 2 inputs and the action for each run.
-COPIES = {'checked': 0, 'cpu': 3 * REPORT_EVERY}
+COPIES = {'checked': 0, 'cpu': 3 * REPORT_EVERY, 'tensorrt': 0}
 
 # Launch arguments, the camera's exit status, and lines each process must log.
 CASES = {
@@ -66,6 +71,8 @@ CASES = {
     # only the policy's exit status is checked.
     'wrong_program': ({'state_shape': '[0]'}, None,
                       [('1 input and 1 output topics, but the program takes 2 inputs', POLICY)]),
+    'tensorrt': ({'expected_file_path': os.path.join(TENSORRT_DIR, 'expected_outputs.bin'),
+                  'backend_libraries': str([TENSORRT_LIBRARY])}, 0, IN_PLACE),
 }
 
 
@@ -86,11 +93,22 @@ def previous_frame_expected_file():
 @launch_testing.parametrize('case', list(CASES))
 def generate_test_description(case):
     """Camera and policy, from the package's launch file."""
-    if not MODEL_DIR:
-        raise unittest.SkipTest('EXECUTORCH_POLICY_DEMO_TEST_MODEL_DIR is not set')
-    data = sorted(glob.glob(os.path.join(MODEL_DIR, '*.ptd'))) or ['']
+    if case == 'tensorrt':
+        model_dir = TENSORRT_DIR
+        if not TENSORRT_DIR or not TENSORRT_LIBRARY:
+            raise unittest.SkipTest(
+                'EXECUTORCH_POLICY_DEMO_TEST_TENSORRT_DIR and '
+                'EXECUTORCH_POLICY_DEMO_TEST_TENSORRT_LIBRARY are not both set')
+        with open(os.path.join(TENSORRT_DIR, 'model.pte'), 'rb') as program:
+            # Without a TensorRT part the case would pass whatever library it is given.
+            assert b'TensorRTBackend' in program.read(), 'the program has no TensorRT part'
+    else:
+        model_dir = MODEL_DIR
+        if not MODEL_DIR:
+            raise unittest.SkipTest('EXECUTORCH_POLICY_DEMO_TEST_MODEL_DIR is not set')
+    data = sorted(glob.glob(os.path.join(model_dir, '*.ptd'))) or ['']
     arguments = {
-        'model_file_path': os.path.join(MODEL_DIR, 'model.pte'),
+        'model_file_path': os.path.join(model_dir, 'model.pte'),
         'data_file_paths': str(data),
         'transport': 'cuda',
         'frames': str(FRAMES),
