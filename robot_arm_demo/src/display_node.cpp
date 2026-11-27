@@ -118,7 +118,7 @@ private:
     roi.copy_(roi * (1.0f - alpha));
   }
 
-  void tensor_callback(const tensor_msgs::msg::ExperimentalTensor::SharedPtr msg)
+  void tensor_callback(const tensor_msgs::msg::ExperimentalTensor::ConstSharedPtr msg)
   {
     if (msg->shape.size() < 3) {
       RCLCPP_ERROR(
