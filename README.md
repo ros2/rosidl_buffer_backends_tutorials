@@ -92,6 +92,35 @@ The `torch_conversions` path keeps the frame bytes on the registered
 `rosidl::Buffer` backend, so the CUDA path goes through the same
 `cuda_buffer_backend` IPC transport used by lower-level buffer examples.
 
+## executorch_policy_demo
+
+A GPU camera feeding an [ExecuTorch](https://github.com/pytorch/executorch)
+policy, in 2 processes. The camera renders a frame on the GPU and publishes it
+with a robot state. The policy node runs an exported PyTorch program (`.pte`) on
+the received tensors and publishes the action back. The camera then sends the
+next frame, as a control loop does, and reports the round trip time.
+
+The demo uses **`executorch_conversions`**, so neither node loads LibTorch. With
+`transport:=cuda`, the program reads the frame from the publisher's GPU memory in
+place and writes the action into a message the camera reads from GPU memory. With
+`transport:=cpu`, the same loop uses host messages. Given the outputs the export
+computed for each frame, the camera checks every action against them.
+
+See [executorch_policy_demo/README.md](executorch_policy_demo/README.md) for
+model export and launch commands.
+
+### Reference numbers
+
+Median round trip, measured inter-process with Fast DDS on an NVIDIA A100, with a
+`[H, W, 4]` uint8 frame and a program that reduces it to 4 values. Each round
+trip sends one frame to the policy and gets one action back. The ranges cover 4
+runs on a GPU shared with other jobs.
+
+| Resolution | Image Size | `executorch_conversions` + CUDA IPC | CPU messages |
+|---|---:|---:|---:|
+| 1920x1080 | 7.9 MB | 0.48 to 0.60 ms | 41 to 51 ms |
+| 3840x2160 | 31.6 MB | 0.51 to 0.61 ms | 126 to 166 ms |
+
 ## License
 
 Apache-2.0
